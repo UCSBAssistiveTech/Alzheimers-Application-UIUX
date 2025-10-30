@@ -257,96 +257,126 @@ struct ReactionGameView: View {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Subview: Reflex-Dot Game
+// MARK: – Subview: Reflex-Dot Game (repurposed so the circle moves side-to-side)
 // ─────────────────────────────────────────────────────────────────────────────
 struct ReflexDotGameView: View {
     @Binding var isShowing: Bool
     var hitPercentageHandler: (Double) -> Void
 
-    private let totalCircles = 5
-    private let maxCycles     = 3
-    private let speedUpFactor : Double = 0.95
+    // --- Tunables ---
+    private let circleSize: CGFloat = 60
+    private let duration: TimeInterval = 12        // total run time (s)
+    private let omega: Double = 0.8                // angular speed (rad/s)
+    private let rampTime: TimeInterval = 0.8       // ease in/out time (s)
 
-    @State private var currentDelay    = 1.0
-    @State private var highlightedIndex = 0
-    @State private var forward         = true
-    @State private var hitCount        = 0
-    @State private var missCount       = 0
-    @State private var cycleCount      = 0
-    @State private var isRunning       = true
+    // --- State ---
+    @State private var startDate = Date()
+    @State private var finished = false
+
+    @State private var hitCount = 0
+    @State private var missCount = 0
+    
+    @State private var currentX: CGFloat = 0
+    @State private var currentY: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 30) {
-            Text("Tap the red circle!")
-                .font(.title)
-                .foregroundColor(.white)
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            Text("Hit Rate: \(hitPercentage, specifier: "%.0f")%")
-                .font(.headline)
-                .foregroundColor(.yellow)
+                VStack(spacing: 8) {
+                    Text("Smooth Pursuit")
+                        .font(.title)
+                        .foregroundColor(.white)
+                    Text("Track the blue circle with your eyes.")
+                        .foregroundColor(.white.opacity(0.8))
+                        .font(.headline)
+                }
+                .position(x: geo.size.width/2, y: 80)
 
-            HStack(spacing: 30) {
-                ForEach(0..<totalCircles, id: \.self) { i in
+                // Continuous side-to-side motion
+                TimelineView(.animation) { timeline in
+                    let t = timeline.date.timeIntervalSince(startDate)
+                    let progress = clamp01(t / duration)
+                    let eased = easeInOut(t: t, total: duration, ramp: rampTime)
+
+                    let centerY = geo.size.height / 2
+                    let centerX = geo.size.width / 2
+                    let amplitude = geo.size.width * 0.35   // horizontal travel
+                    let x = centerX + amplitude * CGFloat(sin(omega * t)) * CGFloat(eased)
+
                     Circle()
-                        .fill(i == highlightedIndex ? .red : .gray)
-                        .frame(width: 100, height: 100)
-                        .scaleEffect(i == highlightedIndex ? 1.2 : 0.8)
-                        .animation(.easeInOut(duration: 0.2), value: highlightedIndex)
-                        .onTapGesture {
-                            if i == highlightedIndex { hitCount += 1 }
-                            else                    { missCount += 1 }
+                        .fill(Color.blue)
+                        .frame(width: circleSize, height: circleSize)
+                        .position(x: x, y: centerY)
+                        .shadow(radius: 8)
+                        .onChange(of: x) {
+                            self.currentX = x
+                            self.currentY = centerY
+                        }
+                        .onChange(of: progress) {
+                            if progress >= 1.0 && !finished {
+                                finished = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                    hitPercentageHandler(hitPercentage)
+                                    isShowing = false
+                                }
+                            }
                         }
                 }
-            }
-
-            if !isRunning {
-                Button("Finish") {
-                    hitPercentageHandler(hitPercentage)
-                    isShowing = false
+                VStack(spacing: 6) {
+                    Text("Hits: \(hitCount)").foregroundColor(.green)
+                    Text("Misses: \(missCount)").foregroundColor(.red)
+                    Text("Accuracy: \(hitPercentage, specifier: "%.0f")%").foregroundColor(.yellow)
                 }
-                .padding()
-                .background(Color.green)
-                .foregroundColor(.white)
-                .cornerRadius(8)
+                .font(.headline)
+                .position(x: geo.size.width/2, y: geo.size.height - 100)
             }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onEnded { value in
+                        let loc = value.location
+                        let dx = loc.x - currentX
+                        let dy = loc.y - currentY
+                        let r = circleSize / 2
+                        if (dx*dx + dy*dy) <= (r*r) {
+                            hitCount += 1     // tap inside = hit
+                        } else {
+                            missCount += 1    // tap outside = miss
+                        }
+                    }
+            )
+            .onAppear { startDate = Date() }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)  // fill the screen
-        .background(Color.black)                            // paint it black
-        .ignoresSafeArea()                                  // under status bar, notch, etc.
-        .onAppear(perform: startHighlighting)
     }
-
+    
     private var hitPercentage: Double {
         let total = hitCount + missCount
-        return total > 0 ? (Double(hitCount) / Double(total) * 100) : 0
+        return total > 0 ? (Double(hitCount) / Double(total) * 100.0) : 0
     }
+    
+    // Helpers
+    private func clamp01(_ x: Double) -> Double { max(0, min(1, x)) }
 
-    private func startHighlighting() {
-        guard isRunning else { return }
-        Timer.scheduledTimer(withTimeInterval: currentDelay, repeats: false) { _ in
-            if forward {
-                highlightedIndex += 1
-                if highlightedIndex == totalCircles - 1 {
-                    forward = false
-                    cycleCount += 1
-                }
-            } else {
-                highlightedIndex -= 1
-                if highlightedIndex == 0 {
-                    forward = true
-                    cycleCount += 1
-                }
-            }
+    // Smoothstep-style ease in/out with ramp at both ends
+    private func easeInOut(t: TimeInterval, total: TimeInterval, ramp: TimeInterval) -> Double {
+        if total <= 0 { return 1 }
+        if t <= 0 { return 0 }
+        if t >= total { return 0 } // fade to stop at the end
 
-            if cycleCount >= maxCycles {
-                isRunning = false
-            } else {
-                currentDelay *= speedUpFactor
-                startHighlighting()
-            }
+        if t < ramp {
+            let u = t / ramp
+            return u * u * (3 - 2*u) // smooth step
         }
+        if t <= total - ramp {
+            return 1
+        }
+        let v = (total - t) / ramp
+        return v * v * (3 - 2*v)
     }
 }
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────

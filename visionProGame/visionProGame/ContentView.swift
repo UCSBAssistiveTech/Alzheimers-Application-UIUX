@@ -12,36 +12,40 @@ struct ReactionGameView: View {
     @State private var showReflexDotGame         = false
     @State private var showOptokineticTest       = false
     @State private var showChromaticPupillometry = false
+    
+    // Explicit state to track when the entire suite is done
+    @State private var isGameOver                = false
 
-    // reaction‐time game state
+    // Test 1 (Prosaccade) state
     @State private var targetPosition      = CGPoint.zero
-    @State private var lastPosition        = CGPoint.zero
+    @State private var showProsaccadeTarget = false // Controls red dot visibility
+    @State private var attemptCount        = 0
+    @State private var finalCode: String = ""
+    
+    // Config for Test 1
+    private let maxProsaccadeDots = 5
+    private let prosaccadeDotDuration = 0.8 // 800 ms
+    private let prosaccadeInterval = 3.0    // 3 seconds delay
+    private let blueDotSize: CGFloat = 100  // Kept for legacy sizing logic
+    private let redDotSize: CGFloat  = 20   // Used for White center dot AND Red target dot
+
+    // Stats (Legacy vars kept for compatibility with result screen)
+    @State private var finalHitPercentage: Double = 0
     @State private var deltaX: CGFloat     = 0
     @State private var deltaY: CGFloat     = 0
     @State private var totalDeltaX: CGFloat = 0
     @State private var totalDeltaY: CGFloat = 0
-    @State private var finalHitPercentage: Double = 0
     @State private var reactionTime: TimeInterval = 0
     @State private var totalReactionTime: TimeInterval = 0
-    @State private var targetAppearedTime: Date?
-    @State private var attemptCount        = 0
-    @State private var finalCode: String = ""
-    
-    private let maxAttempts = 5
-    private let blueDotSize: CGFloat = 100
-    private let redDotSize: CGFloat  = 20
 
     private var averageReactionTime: TimeInterval {
-        guard attemptCount > 0 else { return 0 }
-        return totalReactionTime / Double(attemptCount)
+        return 0 // Not applicable for passive Prosaccade test
     }
     private var averageDeltaX: CGFloat {
-        guard attemptCount > 0 else { return 0 }
-        return totalDeltaX / CGFloat(attemptCount)
+        return 0
     }
     private var averageDeltaY: CGFloat {
-        guard attemptCount > 0 else { return 0 }
-        return totalDeltaY / CGFloat(attemptCount)
+        return 0
     }
 
     var body: some View {
@@ -59,8 +63,8 @@ struct ReactionGameView: View {
                                 slidePhase = 0
                                 switch current {
                                 case 1:
-                                    // Test 1/4 → Reaction‐Time Game
-                                    break
+                                    // Start Test 1 Sequence
+                                    startProsaccadeSequence(in: geo.size)
                                 case 2:
                                     showReflexDotGame = true
                                 case 3:
@@ -73,38 +77,37 @@ struct ReactionGameView: View {
                             }
                         }
 
-                // ─── 1) Start Screen ────────────────────────────────────
+                // ─── 1) Start Screen (Instructions) ─────────────────────
                 } else if showStartScreen {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 20) {
-                        Text("Reaction Time Game")
+                        Text("Prosaccade Test")
                             .font(.largeTitle)
                             .foregroundColor(.white)
 
-                        Text("""
-                            When the blue circle appears, gaze at it and pinch to tap as quickly as you can. \
-                            You will get \(maxAttempts) attempts. Then you’ll proceed through 3 more vision tests.
-                            """)
-                            .font(.body)
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                            .padding()
+                        ScrollView {
+                            Text("""
+                                Please follow the appearing dots as soon as you see them appear to the best of your ability. \
+                                A central point in the form of a white circle will be present at the beginning of the trial and will remain throughout the duration of the test. \
+                                A red dot will appear at various angles relative to the central point every 3 seconds at random and remain for 800 milliseconds. \
+                                Track the dot with your head positioned still as soon as you see it appear, then once the dot disappears, reset your view to the central point until the next point appears.
+                                """)
+                                .font(.title3)
+                                .foregroundColor(.white)
+                                .multilineTextAlignment(.center)
+                                .padding()
+                        }
+                        .frame(maxHeight: 300)
 
                         Button("Start Game") {
                             // reset all state
                             attemptCount        = 0
-                            reactionTime        = 0
-                            totalReactionTime   = 0
-                            deltaX              = 0
-                            deltaY              = 0
-                            totalDeltaX         = 0
-                            totalDeltaY         = 0
-                            finalHitPercentage  = 0
-                            lastPosition        = .zero
+                            showProsaccadeTarget = false
                             showStartScreen     = false
                             showReflexDotGame   = false
                             showOptokineticTest = false
                             showChromaticPupillometry = false
+                            isGameOver          = false
 
                             // show slide 1/4 first
                             slidePhase = 1
@@ -119,100 +122,76 @@ struct ReactionGameView: View {
                     .frame(width: geo.size.width * 0.8)
                     .position(x: geo.size.width/2, y: geo.size.height/2)
 
-                // ─── 2) Reaction‐Time Gameplay ───────────────────────────
-                } else if attemptCount < maxAttempts
+                // ─── 2) Test 1: Prosaccade ──────────────────────────────
+                } else if attemptCount < maxProsaccadeDots
                          && !showReflexDotGame
                          && !showOptokineticTest
                          && !showChromaticPupillometry
+                         && !isGameOver
                 {
                     Color.black.ignoresSafeArea()
-                    // fixed red dot
+                    
+                    // Central fixation point: White dot
                     Circle()
-                        .fill(Color.red)
+                        .fill(Color.white)
                         .frame(width: redDotSize, height: redDotSize)
                         .position(x: geo.size.width/2, y: geo.size.height/2)
 
-                    // moving blue target
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: blueDotSize, height: blueDotSize)
-                        .position(targetPosition)
-                        .onAppear { spawnTarget(in: geo.size) }
-                        .focusable(true)
-                        .onTapGesture {
-                            guard let appear = targetAppearedTime else { return }
-                            reactionTime = Date().timeIntervalSince(appear)
-                            totalReactionTime += reactionTime
-                            attemptCount += 1
+                    // Peripheral target: Red dot
+                    if showProsaccadeTarget {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: redDotSize, height: redDotSize)
+                            .position(targetPosition)
+                    }
 
-                            if attemptCount < maxAttempts {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    reactionTime = 0
-                                    spawnTarget(in: geo.size)
-                                }
-                            } else {
-                                // done with reaction test → show Test 2/4
-                                slidePhase = 2
-                            }
-                        }
-
-                    // stats overlay
+                    // Stats overlay (Optional)
                     VStack(spacing: 6) {
-                        if reactionTime > 0 {
-                            Text("Reaction: \(reactionTime, specifier: "%.2f") s")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        Text("Δx: \(deltaX, specifier: "%.0f"), Δy: \(deltaY, specifier: "%.0f")")
+                       Text("Target: \(attemptCount)/\(maxProsaccadeDots)")
                             .font(.body)
-                            .foregroundColor(.yellow)
+                            .foregroundColor(.gray)
                     }
                     .position(x: geo.size.width/2, y: 50)
 
-                // ─── 3) Reflex‐Dot Game ──────────────────────────────────
+                // ─── 3) Test 2: Reflex‐Dot Game ──────────────────────────
                 } else if showReflexDotGame {
                     ReflexDotGameView(
                         isShowing: $showReflexDotGame,
                         hitPercentageHandler: { pct in finalHitPercentage = pct }
                     )
                     .onDisappear {
-                        // after reflex-dot, show Test 3/4
                         slidePhase = 3
                     }
 
-                // ─── 4) Optokinetic Test ─────────────────────────────────
+                // ─── 4) Test 3: Optokinetic Test ─────────────────────────
                 } else if showOptokineticTest {
                     OptokineticTestView(isShowing: $showOptokineticTest)
                         .onDisappear {
-                            // after optokinetic, show Test 4/4
                             slidePhase = 4
                         }
 
-                // ─── 5) Chromatic Pupillometry Test ──────────────────────
+                // ─── 5) Test 4: Chromatic Pupillometry ───────────────────
                 } else if showChromaticPupillometry {
-                    ChromaticPupillometryView(isShowing: $showChromaticPupillometry)
+                    ChromaticPupillometryView(
+                        isShowing: $showChromaticPupillometry,
+                        onComplete: {
+                            // Only when Test 4 actually reports completion do we end the game
+                            isGameOver = true
+                        }
+                    )
 
-                // ─── 6) Final End Screen ─────────────────────────────────
-                } else {
+                // ─── 6) Final End Screen (Results) ───────────────────────
+                } else if isGameOver {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 20) {
                         Text("All Tests Complete!")
                             .font(.largeTitle)
                             .foregroundColor(.green)
 
-                        Text("Your average reaction time:")
+                        Text("Tests Completed Successfully")
                             .font(.title2)
-                            .foregroundColor(.white)
-                        Text("\(averageReactionTime, specifier: "%.2f") s")
-                            .font(.system(size: 48, weight: .bold))
                             .foregroundColor(.white)
 
-                        Text("Average Δx: \(averageDeltaX, specifier: "%.0f")")
-                            .font(.title2)
-                            .foregroundColor(.yellow)
-                        Text("Average Δy: \(averageDeltaY, specifier: "%.0f")")
-                            .font(.title2)
-                            .foregroundColor(.yellow)
                         Text("Dot Hit Accuracy: \(finalHitPercentage, specifier: "%.0f")%")
                             .font(.title2)
                             .foregroundColor(.blue)
@@ -227,6 +206,7 @@ struct ReactionGameView: View {
 
                         Button("Play Again") {
                             showStartScreen = true
+                            isGameOver = false
                         }
                         .font(.title2)
                         .padding(.horizontal, 40)
@@ -237,18 +217,49 @@ struct ReactionGameView: View {
                     }
                     .frame(width: geo.size.width * 0.8)
                     .position(x: geo.size.width/2, y: geo.size.height/2)
+                    
+                } else {
+                    // ─── Default Transition State ────────────────────────
+                    // This block catches the 3-second gap between tests
+                    // Renders a black screen instead of falling through to results
+                    Color.black.ignoresSafeArea()
                 }
             }
         }
     }
 
-    /// spawn a new blue dot away from center
+    // ─── Test 1 Logic ──────────────────────────────────────────────
+    
+    private func startProsaccadeSequence(in size: CGSize) {
+        attemptCount = 0
+        scheduleNextProsaccadeStep(in: size, delay: prosaccadeInterval)
+    }
+
+    private func scheduleNextProsaccadeStep(in size: CGSize, delay: TimeInterval) {
+        guard attemptCount < maxProsaccadeDots else {
+            // End of Test 1 -> Transition to Slide 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                slidePhase = 2
+            }
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            spawnTarget(in: size)
+            showProsaccadeTarget = true
+            attemptCount += 1
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + prosaccadeDotDuration) {
+                showProsaccadeTarget = false
+                scheduleNextProsaccadeStep(in: size, delay: prosaccadeInterval)
+            }
+        }
+    }
+
     private func spawnTarget(in size: CGSize) {
-        guard attemptCount < maxAttempts else { return }
-        lastPosition = targetPosition
         let pad: CGFloat = 50
         let center = CGPoint(x: size.width/2, y: size.height/2)
-        let minDist = (redDotSize + blueDotSize)/2
+        let minDist = redDotSize * 2
 
         var x: CGFloat, y: CGFloat
         repeat {
@@ -256,13 +267,9 @@ struct ReactionGameView: View {
             y = .random(in: pad...(size.height - pad))
         } while hypot(x - center.x, y - center.y) < minDist
 
-        targetPosition       = CGPoint(x: x, y: y)
-        deltaX               = x - lastPosition.x
-        deltaY               = y - lastPosition.y
-        totalDeltaX         += abs(deltaX)
-        totalDeltaY         += abs(deltaY)
-        targetAppearedTime   = Date()
+        targetPosition = CGPoint(x: x, y: y)
     }
+
     private func generateRandomCode() -> String {
         let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
         return String((0..<14).map { _ in chars.randomElement()! })
@@ -445,20 +452,16 @@ struct OptokineticTestView: View {
 // ─────────────────────────────────────────────────────────────────────────────
 struct ChromaticPupillometryView: View {
     @Binding var isShowing: Bool
+    // Callback to notify parent that we are truly done
+    var onComplete: () -> Void
     
-    // Test States
     @State private var isInstructionPhase = true
     @State private var isDarkAdaptationPhase = false
     @State private var isTestingPhase = false
     @State private var backgroundColor = Color.black
     
-    // Data tracking
     @State private var currentRound = 1
-    // DEMO CHANGE: Set total rounds to 1
     private let totalRounds = 1
-    
-    // Text feedback
-    @State private var statusText = ""
     
     var body: some View {
         ZStack {
@@ -504,9 +507,8 @@ struct ChromaticPupillometryView: View {
                 .frame(maxWidth: 600)
                 
             } else if isDarkAdaptationPhase {
-                // Just the black background (no text as requested)
+                // Just the black background
             }
-            // During testing phase, screen is mostly black or blue, no text needed per PDF
         }
     }
     
@@ -515,7 +517,6 @@ struct ChromaticPupillometryView: View {
         isDarkAdaptationPhase = true
         backgroundColor = .black
         
-        // 10 seconds dark adaptation as requested (demo mode)
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
             isDarkAdaptationPhase = false
             isTestingPhase = true
@@ -528,48 +529,37 @@ struct ChromaticPupillometryView: View {
         runRound(roundIndex: 1)
     }
     
-    // Recursive function to handle the rounds
     private func runRound(roundIndex: Int) {
         if roundIndex > totalRounds {
             // Test Complete
+            onComplete()     // Notify parent we are done
             isShowing = false
             return
         }
         
         currentRound = roundIndex
         
-        // Sequence for one round:
-        // Flash 1 (1s) -> Intermission (3s) -> Flash 2 (1s) -> Intermission (3s) -> Flash 3 (1s) -> Intermission (3s)
-        
         runFlashSequence(count: 1) {
-            // Round complete, start next round
             runRound(roundIndex: roundIndex + 1)
         }
     }
     
-    // Recursive function to handle the 3 flashes per round
     private func runFlashSequence(count: Int, completion: @escaping () -> Void) {
         if count > 3 {
             completion()
             return
         }
         
-        // 1. Flash Blue Light (approx 460-485 nm)
-        // Using standard Blue which is approx 470nm in RGB color space
         withAnimation(.linear(duration: 0.1)) {
             backgroundColor = Color.blue
         }
         
-        // Flash duration: 1 second
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            // 2. Intermission (Black Screen)
             withAnimation(.linear(duration: 0.1)) {
                 backgroundColor = Color.black
             }
             
-            // Intermission duration: 3 seconds (DEMO MODE)
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                // Next flash in the sequence
                 runFlashSequence(count: count + 1, completion: completion)
             }
         }

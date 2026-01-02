@@ -1,16 +1,17 @@
 import SwiftUI
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Main View orchestrating all three tests, with slide screens
+// MARK: – Main View orchestrating all four tests, with slide screens
 // ─────────────────────────────────────────────────────────────────────────────
 struct ReactionGameView: View {
-    // which slide we’re on (0 = no slide; 1,2,3 = “Test 1/3”…“Test 3/3”)
+    // which slide we’re on (0 = no slide; 1..4 = “Test 1/4”…“Test 4/4”)
     @State private var slidePhase: Int = 0
 
     // which screen is active
-    @State private var showStartScreen     = true
-    @State private var showReflexDotGame   = false
-    @State private var showOptokineticTest = false
+    @State private var showStartScreen           = true
+    @State private var showReflexDotGame         = false
+    @State private var showOptokineticTest       = false
+    @State private var showChromaticPupillometry = false
 
     // reaction‐time game state
     @State private var targetPosition      = CGPoint.zero
@@ -49,7 +50,7 @@ struct ReactionGameView: View {
                 // ─── SLIDE SCREEN ───────────────────────────────────────
                 if slidePhase > 0 {
                     Color.white.ignoresSafeArea()
-                    Text("Test \(slidePhase)/3")
+                    Text("Test \(slidePhase)/4")
                         .font(.system(size: 64, weight: .bold))
                         .foregroundColor(.black)
                         .onAppear {
@@ -58,13 +59,14 @@ struct ReactionGameView: View {
                                 slidePhase = 0
                                 switch current {
                                 case 1:
-                                    // Test 1/3 → Reaction‐Time Game
-                                    // (no flag needed; will fall through to attemptCount < maxAttempts block)
+                                    // Test 1/4 → Reaction‐Time Game
                                     break
                                 case 2:
                                     showReflexDotGame = true
                                 case 3:
                                     showOptokineticTest = true
+                                case 4:
+                                    showChromaticPupillometry = true
                                 default:
                                     break
                                 }
@@ -81,7 +83,7 @@ struct ReactionGameView: View {
 
                         Text("""
                             When the blue circle appears, gaze at it and pinch to tap as quickly as you can. \
-                            You will get \(maxAttempts) attempts. After that, you’ll be tested on your reflexes.
+                            You will get \(maxAttempts) attempts. Then you’ll proceed through 3 more vision tests.
                             """)
                             .font(.body)
                             .foregroundColor(.white)
@@ -100,8 +102,11 @@ struct ReactionGameView: View {
                             finalHitPercentage  = 0
                             lastPosition        = .zero
                             showStartScreen     = false
+                            showReflexDotGame   = false
+                            showOptokineticTest = false
+                            showChromaticPupillometry = false
 
-                            // show slide 1/3 first
+                            // show slide 1/4 first
                             slidePhase = 1
                         }
                         .font(.title2)
@@ -118,6 +123,7 @@ struct ReactionGameView: View {
                 } else if attemptCount < maxAttempts
                          && !showReflexDotGame
                          && !showOptokineticTest
+                         && !showChromaticPupillometry
                 {
                     Color.black.ignoresSafeArea()
                     // fixed red dot
@@ -145,7 +151,7 @@ struct ReactionGameView: View {
                                     spawnTarget(in: geo.size)
                                 }
                             } else {
-                                // done with reaction test → show Test 2/3
+                                // done with reaction test → show Test 2/4
                                 slidePhase = 2
                             }
                         }
@@ -170,19 +176,27 @@ struct ReactionGameView: View {
                         hitPercentageHandler: { pct in finalHitPercentage = pct }
                     )
                     .onDisappear {
-                        // after reflex-dot, show Test 3/3
+                        // after reflex-dot, show Test 3/4
                         slidePhase = 3
                     }
 
                 // ─── 4) Optokinetic Test ─────────────────────────────────
                 } else if showOptokineticTest {
                     OptokineticTestView(isShowing: $showOptokineticTest)
+                        .onDisappear {
+                            // after optokinetic, show Test 4/4
+                            slidePhase = 4
+                        }
 
-                // ─── 5) Final End Screen ─────────────────────────────────
+                // ─── 5) Chromatic Pupillometry Test ──────────────────────
+                } else if showChromaticPupillometry {
+                    ChromaticPupillometryView(isShowing: $showChromaticPupillometry)
+
+                // ─── 6) Final End Screen ─────────────────────────────────
                 } else {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 20) {
-                        Text("Game Over!")
+                        Text("All Tests Complete!")
                             .font(.largeTitle)
                             .foregroundColor(.green)
 
@@ -310,9 +324,9 @@ struct ReflexDotGameView: View {
                 .cornerRadius(8)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)  // fill the screen
-        .background(Color.black)                            // paint it black
-        .ignoresSafeArea()                                  // under status bar, notch, etc.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+        .ignoresSafeArea()
         .onAppear(perform: startHighlighting)
     }
 
@@ -426,20 +440,149 @@ struct OptokineticTestView: View {
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: – Subview: Chromatic Pupillometry Test (Test 4)
+// ─────────────────────────────────────────────────────────────────────────────
+struct ChromaticPupillometryView: View {
+    @Binding var isShowing: Bool
+    
+    // Test States
+    @State private var isInstructionPhase = true
+    @State private var isDarkAdaptationPhase = false
+    @State private var isTestingPhase = false
+    @State private var backgroundColor = Color.black
+    
+    // Data tracking
+    @State private var currentRound = 1
+    // DEMO CHANGE: Set total rounds to 1
+    private let totalRounds = 1
+    
+    // Text feedback
+    @State private var statusText = ""
+    
+    var body: some View {
+        ZStack {
+            backgroundColor.ignoresSafeArea()
+            
+            if isInstructionPhase {
+                VStack(spacing: 30) {
+                    Text("Chromatic Pupillometry")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                    
+                    VStack(alignment: .leading, spacing: 15) {
+                        Label("WARNING: Flashing Lights", systemImage: "exclamationmark.triangle.fill")
+                            .font(.title3)
+                            .foregroundColor(.yellow)
+                        
+                        Text("This test involves flashing blue lights. \nPlease confirm you have been pre-screened for Epilepsy.")
+                            .font(.body)
+                            .foregroundColor(.white)
+                        
+                        Text("Procedure:")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                        Text("1. Dark adaptation (10 seconds)\n2. You will see brief flashes of blue light.\n3. Keep your eyes open and focus on the screen.")
+                            .font(.body)
+                            .foregroundColor(.white)
+                    }
+                    .padding()
+                    .background(Color.white.opacity(0.1))
+                    .cornerRadius(12)
+                    
+                    Button("Start Test") {
+                        startDarkAdaptation()
+                    }
+                    .font(.title2)
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                }
+                .frame(maxWidth: 600)
+                
+            } else if isDarkAdaptationPhase {
+                // Just the black background (no text as requested)
+            }
+            // During testing phase, screen is mostly black or blue, no text needed per PDF
+        }
+    }
+    
+    private func startDarkAdaptation() {
+        isInstructionPhase = false
+        isDarkAdaptationPhase = true
+        backgroundColor = .black
+        
+        // 10 seconds dark adaptation as requested (demo mode)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            isDarkAdaptationPhase = false
+            isTestingPhase = true
+            startTestingRounds()
+        }
+    }
+    
+    private func startTestingRounds() {
+        guard isTestingPhase else { return }
+        runRound(roundIndex: 1)
+    }
+    
+    // Recursive function to handle the rounds
+    private func runRound(roundIndex: Int) {
+        if roundIndex > totalRounds {
+            // Test Complete
+            isShowing = false
+            return
+        }
+        
+        currentRound = roundIndex
+        
+        // Sequence for one round:
+        // Flash 1 (1s) -> Intermission (3s) -> Flash 2 (1s) -> Intermission (3s) -> Flash 3 (1s) -> Intermission (3s)
+        
+        runFlashSequence(count: 1) {
+            // Round complete, start next round
+            runRound(roundIndex: roundIndex + 1)
+        }
+    }
+    
+    // Recursive function to handle the 3 flashes per round
+    private func runFlashSequence(count: Int, completion: @escaping () -> Void) {
+        if count > 3 {
+            completion()
+            return
+        }
+        
+        // 1. Flash Blue Light (approx 460-485 nm)
+        // Using standard Blue which is approx 470nm in RGB color space
+        withAnimation(.linear(duration: 0.1)) {
+            backgroundColor = Color.blue
+        }
+        
+        // Flash duration: 1 second
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // 2. Intermission (Black Screen)
+            withAnimation(.linear(duration: 0.1)) {
+                backgroundColor = Color.black
+            }
+            
+            // Intermission duration: 3 seconds (DEMO MODE)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                // Next flash in the sequence
+                runFlashSequence(count: count + 1, completion: completion)
+            }
+        }
+    }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: – Preview
 // ─────────────────────────────────────────────────────────────────────────────
 struct ReactionGameView_Previews: PreviewProvider {
     static var previews: some View {
-        Group {
-            ReactionGameView()
-                .previewDevice("Apple Vision Pro")
-                .previewDisplayName("Vision Pro")
-
-            ReactionGameView()
-                .previewDevice("iPhone 15 Pro")
-                .previewDisplayName("iPhone 15 Pro")
-        }
+        ReactionGameView()
+            .previewDevice("Apple Vision Pro")
     }
 }

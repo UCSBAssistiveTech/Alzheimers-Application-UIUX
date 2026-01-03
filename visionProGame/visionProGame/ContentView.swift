@@ -1,10 +1,10 @@
 import SwiftUI
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Main View orchestrating all four tests, with slide screens
+// MARK: – Main View orchestrating all FIVE tests, with slide screens
 // ─────────────────────────────────────────────────────────────────────────────
 struct ReactionGameView: View {
-    // which slide we’re on (0 = no slide; 1..4 = “Test 1/4”…“Test 4/4”)
+    // which slide we’re on (0 = no slide; 1..5 = “Test 1/5”…“Test 5/5”)
     @State private var slidePhase: Int = 0
 
     // which screen is active
@@ -12,41 +12,27 @@ struct ReactionGameView: View {
     @State private var showReflexDotGame         = false
     @State private var showOptokineticTest       = false
     @State private var showChromaticPupillometry = false
+    @State private var showWorkingMemoryTest     = false // Test 5
     
     // Explicit state to track when the entire suite is done
     @State private var isGameOver                = false
 
     // Test 1 (Prosaccade) state
     @State private var targetPosition      = CGPoint.zero
-    @State private var showProsaccadeTarget = false // Controls red dot visibility
+    @State private var showProsaccadeTarget = false
     @State private var attemptCount        = 0
     @State private var finalCode: String = ""
     
     // Config for Test 1
     private let maxProsaccadeDots = 5
-    private let prosaccadeDotDuration = 0.8 // 800 ms
-    private let prosaccadeInterval = 3.0    // 3 seconds delay
-    private let blueDotSize: CGFloat = 100  // Kept for legacy sizing logic
-    private let redDotSize: CGFloat  = 20   // Used for White center dot AND Red target dot
+    private let prosaccadeDotDuration = 0.8
+    private let prosaccadeInterval = 3.0
+    private let blueDotSize: CGFloat = 100
+    private let redDotSize: CGFloat  = 20
 
-    // Stats (Legacy vars kept for compatibility with result screen)
+    // Stats
     @State private var finalHitPercentage: Double = 0
-    @State private var deltaX: CGFloat     = 0
-    @State private var deltaY: CGFloat     = 0
-    @State private var totalDeltaX: CGFloat = 0
-    @State private var totalDeltaY: CGFloat = 0
-    @State private var reactionTime: TimeInterval = 0
-    @State private var totalReactionTime: TimeInterval = 0
-
-    private var averageReactionTime: TimeInterval {
-        return 0 // Not applicable for passive Prosaccade test
-    }
-    private var averageDeltaX: CGFloat {
-        return 0
-    }
-    private var averageDeltaY: CGFloat {
-        return 0
-    }
+    @State private var workingMemoryScore: Int = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -54,7 +40,7 @@ struct ReactionGameView: View {
                 // ─── SLIDE SCREEN ───────────────────────────────────────
                 if slidePhase > 0 {
                     Color.white.ignoresSafeArea()
-                    Text("Test \(slidePhase)/4")
+                    Text("Test \(slidePhase)/5")
                         .font(.system(size: 64, weight: .bold))
                         .foregroundColor(.black)
                         .onAppear {
@@ -71,6 +57,8 @@ struct ReactionGameView: View {
                                     showOptokineticTest = true
                                 case 4:
                                     showChromaticPupillometry = true
+                                case 5:
+                                    showWorkingMemoryTest = true
                                 default:
                                     break
                                 }
@@ -99,7 +87,7 @@ struct ReactionGameView: View {
                         }
                         .frame(maxHeight: 300)
 
-                        Button("Start Game") {
+                        Button("Start Test") {
                             // reset all state
                             attemptCount        = 0
                             showProsaccadeTarget = false
@@ -107,9 +95,10 @@ struct ReactionGameView: View {
                             showReflexDotGame   = false
                             showOptokineticTest = false
                             showChromaticPupillometry = false
+                            showWorkingMemoryTest     = false
                             isGameOver          = false
 
-                            // show slide 1/4 first
+                            // show slide 1/5 first
                             slidePhase = 1
                         }
                         .font(.title2)
@@ -127,6 +116,7 @@ struct ReactionGameView: View {
                          && !showReflexDotGame
                          && !showOptokineticTest
                          && !showChromaticPupillometry
+                         && !showWorkingMemoryTest
                          && !isGameOver
                 {
                     Color.black.ignoresSafeArea()
@@ -145,7 +135,6 @@ struct ReactionGameView: View {
                             .position(targetPosition)
                     }
 
-                    // Stats overlay (Optional)
                     VStack(spacing: 6) {
                        Text("Target: \(attemptCount)/\(maxProsaccadeDots)")
                             .font(.body)
@@ -175,12 +164,22 @@ struct ReactionGameView: View {
                     ChromaticPupillometryView(
                         isShowing: $showChromaticPupillometry,
                         onComplete: {
-                            // Only when Test 4 actually reports completion do we end the game
-                            isGameOver = true
+                            // Transition to Test 5
+                            slidePhase = 5
                         }
                     )
 
-                // ─── 6) Final End Screen (Results) ───────────────────────
+                // ─── 6) Test 5: Working Memory Test ──────────────────────
+                } else if showWorkingMemoryTest {
+                    WorkingMemoryTestView(
+                        isShowing: $showWorkingMemoryTest,
+                        onComplete: { score in
+                            workingMemoryScore = score
+                            isGameOver = true
+                        }
+                    )
+                
+                // ─── 7) Final End Screen (Results) ───────────────────────
                 } else if isGameOver {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 20) {
@@ -195,6 +194,11 @@ struct ReactionGameView: View {
                         Text("Dot Hit Accuracy: \(finalHitPercentage, specifier: "%.0f")%")
                             .font(.title2)
                             .foregroundColor(.blue)
+                        
+                        Text("Working Memory Score: \(workingMemoryScore)/4")
+                            .font(.title2)
+                            .foregroundColor(.purple)
+
                         Text("Final Score: \(finalCode)")
                         .font(.title2)
                         .foregroundColor(.white)
@@ -219,9 +223,7 @@ struct ReactionGameView: View {
                     .position(x: geo.size.width/2, y: geo.size.height/2)
                     
                 } else {
-                    // ─── Default Transition State ────────────────────────
-                    // This block catches the 3-second gap between tests
-                    // Renders a black screen instead of falling through to results
+                    // Default Transition State
                     Color.black.ignoresSafeArea()
                 }
             }
@@ -237,7 +239,6 @@ struct ReactionGameView: View {
 
     private func scheduleNextProsaccadeStep(in size: CGSize, delay: TimeInterval) {
         guard attemptCount < maxProsaccadeDots else {
-            // End of Test 1 -> Transition to Slide 2
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 slidePhase = 2
             }
@@ -273,6 +274,289 @@ struct ReactionGameView: View {
     private func generateRandomCode() -> String {
         let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
         return String((0..<14).map { _ in chars.randomElement()! })
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARK: – Subview: Working Memory Test (Test 5)
+// ─────────────────────────────────────────────────────────────────────────────
+struct WorkingMemoryTestView: View {
+    @Binding var isShowing: Bool
+    var onComplete: (Int) -> Void
+    
+    // Config
+    private let totalSequences = 4
+    private let delayDuration = 1.0 // 1000ms delay between memory and test
+    
+    // State
+    @State private var isInstructionPhase = true
+    @State private var currentSequenceIndex = 0
+    @State private var score = 0
+    
+    // Flow control within a sequence
+    @State private var showCue = false
+    @State private var showMemoryArray = false
+    @State private var showTestArray = false
+    @State private var cueDirection: CueDirection = .right
+    
+    // Data
+    @State private var memoryDots: [MemoryDot] = []
+    @State private var testDots: [MemoryDot] = []
+    
+    enum CueDirection {
+        case left, right
+        var symbol: String { self == .left ? "arrow.left" : "arrow.right" }
+    }
+    
+    struct MemoryDot: Identifiable {
+        let id = UUID()
+        var position: CGPoint
+        var color: Color
+        var isTarget: Bool = false // True if this is the dot that changed
+        var originalColor: Color? = nil
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                if isInstructionPhase {
+                    VStack(spacing: 30) {
+                        Text("Working Memory Test")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Put on the headset and wait for an arrow to appear. Pay attention to which side of the screen the arrow is pointing to and determine the dot that changed color on the cued side. There may be no color changes. After each sequence the next sequence will play immediately afterwards.")
+                            .font(.body)
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                        
+                        Button("Start Test") {
+                            isInstructionPhase = false
+                            startSequence(in: geo.size)
+                        }
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                    .frame(maxWidth: 600)
+                    .position(x: geo.size.width/2, y: geo.size.height/2)
+                    
+                } else {
+                    // Game Loop Views
+                    
+                    // 1. Cue Arrow
+                    if showCue {
+                        Image(systemName: cueDirection.symbol)
+                            .font(.system(size: 60))
+                            .foregroundColor(.white)
+                            .position(x: geo.size.width/2, y: geo.size.height/2)
+                    }
+                    
+                    // 2. Memory Array (Initial presentation)
+                    if showMemoryArray {
+                        ForEach(memoryDots) { dot in
+                            Circle()
+                                .fill(dot.color)
+                                .frame(width: 50, height: 50)
+                                .position(dot.position)
+                        }
+                        // Fixation cross
+                        Image(systemName: "plus")
+                            .foregroundColor(.gray)
+                            .position(x: geo.size.width/2, y: geo.size.height/2)
+                    }
+                    
+                    // 3. Test Array (Input phase)
+                    if showTestArray {
+                        ForEach(testDots) { dot in
+                            Circle()
+                                .fill(dot.color)
+                                .frame(width: 50, height: 50)
+                                .position(dot.position)
+                                .onTapGesture {
+                                    handleDotTap(dot, in: geo.size)
+                                }
+                        }
+                        // Fixation cross
+                        Image(systemName: "plus")
+                            .foregroundColor(.gray)
+                            .position(x: geo.size.width/2, y: geo.size.height/2)
+                        
+                        // "No Change" Button
+                        VStack {
+                            Spacer()
+                            Button("No Change") {
+                                handleNoChange(in: geo.size)
+                            }
+                            .padding()
+                            .background(Color.gray)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                            .padding(.bottom, 50)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Logic
+    
+    private func startSequence(in size: CGSize) {
+        // Reset sequence state
+        showCue = false
+        showMemoryArray = false
+        showTestArray = false
+        
+        // Randomize Cue
+        cueDirection = Bool.random() ? .left : .right
+        
+        // Determine number of dots: 2, 4, 6, 8
+        let dotCount = (currentSequenceIndex + 1) * 2
+        
+        // Generate Dots
+        generateDots(count: dotCount, in: size)
+        
+        // TIMING SEQUENCE
+        // 200ms: Arrow Cue appears
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            showCue = true
+            
+            // 500ms: Dots appear (Cue might disappear or stay - typically cue stays or disappears with array. Let's hide cue when dots appear for cleaner look)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { // 200+300 = 500ms
+                showCue = false
+                showMemoryArray = true
+                
+                // 150ms duration for dots (500 + 150 = 650ms)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    showMemoryArray = false
+                    
+                    // Delay phase (1000ms), then Test Array
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delayDuration) {
+                        prepareTestArray()
+                        showTestArray = true
+                    }
+                }
+            }
+        }
+    }
+    
+    private func generateDots(count: Int, in size: CGSize) {
+        memoryDots = []
+        let halfWidth = size.width / 2
+        let safePadding: CGFloat = 60
+        
+        // Generate half on left, half on right
+        let perSide = count / 2
+        
+        // Helper to generate distinct dots for a region
+        func createDots(forRightSide: Bool) -> [MemoryDot] {
+            var newDots: [MemoryDot] = []
+            let xRange = forRightSide ? (halfWidth + safePadding...size.width - safePadding) : (safePadding...halfWidth - safePadding)
+            let yRange = safePadding...size.height - safePadding
+            
+            for _ in 0..<perSide {
+                var pos: CGPoint
+                var tries = 0
+                // Simple non-overlap logic
+                repeat {
+                    pos = CGPoint(
+                        x: CGFloat.random(in: xRange),
+                        y: CGFloat.random(in: yRange)
+                    )
+                    tries += 1
+                } while tries < 50 && newDots.contains(where: { hypot($0.position.x - pos.x, $0.position.y - pos.y) < 60 })
+                
+                newDots.append(MemoryDot(position: pos, color: randomColor()))
+            }
+            return newDots
+        }
+        
+        // IMPORTANT: Generate Left Side FIRST, then Right Side.
+        // This order allows us to calculate sides by index later without checking screen coordinates.
+        memoryDots.append(contentsOf: createDots(forRightSide: false))
+        memoryDots.append(contentsOf: createDots(forRightSide: true))
+    }
+    
+    private func prepareTestArray() {
+        testDots = memoryDots
+        
+        // Determine if change happens (50% chance)
+        let shouldChange = Bool.random()
+        
+        if shouldChange {
+            // Find dots on the cued side
+            // Reliance on generation order: First half is Left, Second half is Right.
+            let midIndex = testDots.count / 2
+            
+            let cuedDotsIndices = testDots.indices.filter { i in
+                if cueDirection == .left {
+                    return i < midIndex
+                } else {
+                    return i >= midIndex
+                }
+            }
+            
+            if let targetIndex = cuedDotsIndices.randomElement() {
+                let oldColor = testDots[targetIndex].color
+                var newColor = randomColor()
+                while newColor == oldColor { newColor = randomColor() }
+                
+                testDots[targetIndex].color = newColor
+                testDots[targetIndex].originalColor = oldColor
+                testDots[targetIndex].isTarget = true
+            }
+        }
+    }
+    
+    private func handleDotTap(_ dot: MemoryDot, in size: CGSize) {
+        // Evaluate
+        if dot.isTarget {
+            // Correct identification of change
+            score += 1
+        } else {
+            // Incorrect
+        }
+        advanceSequence(in: size)
+    }
+    
+    private func handleNoChange(in size: CGSize) {
+        // Evaluate
+        let hasTarget = testDots.contains(where: { $0.isTarget })
+        if !hasTarget {
+            // Correct (there was no change)
+            score += 1
+        } else {
+            // Incorrect (there was a change but user missed it)
+        }
+        advanceSequence(in: size)
+    }
+    
+    private func advanceSequence(in size: CGSize) {
+        showTestArray = false
+        currentSequenceIndex += 1
+        
+        if currentSequenceIndex < totalSequences {
+            // Wait briefly then start next
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                startSequence(in: size)
+            }
+        } else {
+            // Done
+            onComplete(score)
+            isShowing = false
+        }
+    }
+    
+    private func randomColor() -> Color {
+        let colors: [Color] = [.red, .blue, .green, .yellow, .orange, .purple, .cyan, .pink]
+        return colors.randomElement()!
     }
 }
 
@@ -452,7 +736,7 @@ struct OptokineticTestView: View {
 // ─────────────────────────────────────────────────────────────────────────────
 struct ChromaticPupillometryView: View {
     @Binding var isShowing: Bool
-    // Callback to notify parent that we are truly done
+    // Callback to notify parent that we are done
     var onComplete: () -> Void
     
     @State private var isInstructionPhase = true
@@ -576,3 +860,4 @@ struct ReactionGameView_Previews: PreviewProvider {
             .previewDevice("Apple Vision Pro")
     }
 }
+

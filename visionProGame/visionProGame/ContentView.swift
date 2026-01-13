@@ -1,4 +1,5 @@
 import SwiftUI
+import RealityKit
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARK: – Main View orchestrating all three tests, with slide screens
@@ -29,6 +30,13 @@ struct ReactionGameView: View {
     private let maxAttempts = 5
     private let blueDotSize: CGFloat = 100
     private let redDotSize: CGFloat  = 20
+    
+    // 3D sphere sizes (in meters)
+    private let blueSphereRadius: Float = 0.08
+    private let redSphereRadius: Float = 0.03
+    
+    // 3D target position
+    @State private var targetPosition3D = SIMD3<Float>(0, 0, 0)
 
     private var averageReactionTime: TimeInterval {
         guard attemptCount > 0 else { return 0 }
@@ -114,54 +122,88 @@ struct ReactionGameView: View {
                     .frame(width: geo.size.width * 0.8)
                     .position(x: geo.size.width/2, y: geo.size.height/2)
 
-                // ─── 2) Reaction‐Time Gameplay ───────────────────────────
+                // ─── 2) Reaction‐Time Gameplay (3D) ───────────────────────
                 } else if attemptCount < maxAttempts
                          && !showReflexDotGame
                          && !showOptokineticTest
                 {
-                    Color.black.ignoresSafeArea()
-                    // fixed red dot
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: redDotSize, height: redDotSize)
-                        .position(x: geo.size.width/2, y: geo.size.height/2)
-
-                    // moving blue target
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: blueDotSize, height: blueDotSize)
-                        .position(targetPosition)
-                        .onAppear { spawnTarget(in: geo.size) }
-                        .focusable(true)
-                        .onTapGesture {
-                            guard let appear = targetAppearedTime else { return }
-                            reactionTime = Date().timeIntervalSince(appear)
-                            totalReactionTime += reactionTime
-                            attemptCount += 1
-
-                            if attemptCount < maxAttempts {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    reactionTime = 0
-                                    spawnTarget(in: geo.size)
-                                }
-                            } else {
-                                // done with reaction test → show Test 2/3
-                                slidePhase = 2
+                    ZStack {
+                        Color.black.ignoresSafeArea()
+                        
+                        // 3D RealityView with spheres
+                        RealityView { content in
+                            // Create fixed red sphere at center
+                            let redMaterial = SimpleMaterial(color: .red, isMetallic: false)
+                            let redSphere = ModelEntity(
+                                mesh: .generateSphere(radius: redSphereRadius),
+                                materials: [redMaterial]
+                            )
+                            redSphere.position = SIMD3<Float>(0, 0, 0)
+                            redSphere.name = "redSphere"
+                            content.add(redSphere)
+                            
+                            // Create blue target sphere
+                            let blueMaterial = SimpleMaterial(color: .blue, isMetallic: false)
+                            let blueSphere = ModelEntity(
+                                mesh: .generateSphere(radius: blueSphereRadius),
+                                materials: [blueMaterial]
+                            )
+                            blueSphere.position = targetPosition3D
+                            blueSphere.name = "blueSphere"
+                            blueSphere.components.set(InputTargetComponent())
+                            blueSphere.generateCollisionShapes(recursive: false)
+                            content.add(blueSphere)
+                        } update: { content in
+                            // Update blue sphere position when target moves
+                            if let blueSphere = content.entities.first(where: { $0.name == "blueSphere" }) as? ModelEntity {
+                                blueSphere.position = targetPosition3D
                             }
                         }
-
-                    // stats overlay
-                    VStack(spacing: 6) {
-                        if reactionTime > 0 {
-                            Text("Reaction: \(reactionTime, specifier: "%.2f") s")
-                                .font(.title2)
-                                .foregroundColor(.white)
+                        .gesture(
+                            SpatialTapGesture()
+                                .targetedToAnyEntity()
+                                .onEnded { value in
+                                    // Only register hit if tapped on blue sphere
+                                    if value.entity.name == "blueSphere" {
+                                        guard let appear = targetAppearedTime else { return }
+                                        reactionTime = Date().timeIntervalSince(appear)
+                                        totalReactionTime += reactionTime
+                                        attemptCount += 1
+                                        
+                                        if attemptCount < maxAttempts {
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                                reactionTime = 0
+                                                spawnTarget3D()
+                                            }
+                                        } else {
+                                            // done with reaction test → show Test 2/3
+                                            slidePhase = 2
+                                        }
+                                    }
+                                }
+                        )
+                        .onAppear {
+                            spawnTarget3D()
                         }
-                        Text("Δx: \(deltaX, specifier: "%.0f"), Δy: \(deltaY, specifier: "%.0f")")
-                            .font(.body)
-                            .foregroundColor(.yellow)
+                        
+                        // stats overlay
+                        VStack(spacing: 6) {
+                            Text("Attempt \(attemptCount + 1)/\(maxAttempts)")
+                                .font(.headline)
+                                .foregroundColor(.white.opacity(0.7))
+                            if reactionTime > 0 {
+                                Text("Reaction: \(reactionTime, specifier: "%.2f") s")
+                                    .font(.title2)
+                                    .foregroundColor(.white)
+                            }
+                            Text("Δx: \(deltaX, specifier: "%.0f"), Δy: \(deltaY, specifier: "%.0f")")
+                                .font(.body)
+                                .foregroundColor(.yellow)
+                        }
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
                     }
-                    .position(x: geo.size.width/2, y: 50)
 
                 // ─── 3) Reflex‐Dot Game ──────────────────────────────────
                 } else if showReflexDotGame {
@@ -228,7 +270,7 @@ struct ReactionGameView: View {
         }
     }
 
-    /// spawn a new blue dot away from center
+    /// spawn a new blue dot away from center (2D - legacy)
     private func spawnTarget(in size: CGSize) {
         guard attemptCount < maxAttempts else { return }
         lastPosition = targetPosition
@@ -248,6 +290,33 @@ struct ReactionGameView: View {
         totalDeltaX         += abs(deltaX)
         totalDeltaY         += abs(deltaY)
         targetAppearedTime   = Date()
+    }
+    
+    /// spawn a new blue sphere in 3D space away from center
+    private func spawnTarget3D() {
+        guard attemptCount < maxAttempts else { return }
+        
+        let lastPos = targetPosition3D
+        let minDist: Float = blueSphereRadius + redSphereRadius + 0.1
+        
+        // Spawn within a 3D volume (±0.5m on each axis)
+        let range: ClosedRange<Float> = -0.5...0.5
+        
+        var x: Float, y: Float, z: Float
+        repeat {
+            x = Float.random(in: range)
+            y = Float.random(in: range)
+            z = Float.random(in: -0.3...0.3)  // Less depth variation
+        } while sqrt(x*x + y*y + z*z) < minDist
+        
+        targetPosition3D = SIMD3<Float>(x, y, z)
+        
+        // Track deltas (using x and y for compatibility with existing metrics)
+        deltaX = CGFloat((targetPosition3D.x - lastPos.x) * 1000)  // Convert to mm-scale
+        deltaY = CGFloat((targetPosition3D.y - lastPos.y) * 1000)
+        totalDeltaX += abs(deltaX)
+        totalDeltaY += abs(deltaY)
+        targetAppearedTime = Date()
     }
     private func generateRandomCode() -> String {
         let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")

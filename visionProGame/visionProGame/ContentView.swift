@@ -1,475 +1,344 @@
 import SwiftUI
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Main View orchestrating all three tests, with slide screens
-// ─────────────────────────────────────────────────────────────────────────────
+// MARK: – Main View orchestrating the Biomarker Suite
 struct ReactionGameView: View {
-    // which slide we’re on (0 = no slide; 1,2,3 = “Test 1/3”…“Test 3/3”)
-    @State private var slidePhase: Int = 0
+    @State private var activeTest: TestType = .start
+    @State private var finalResults: [String: String] = [:]
 
-    // which screen is active
-    @State private var showStartScreen     = true
-    @State private var showReflexDotGame   = false
-    @State private var showOptokineticTest = false
-
-    // reaction‐time game state
-    @State private var targetPosition      = CGPoint.zero
-    @State private var lastPosition        = CGPoint.zero
-    @State private var deltaX: CGFloat     = 0
-    @State private var deltaY: CGFloat     = 0
-    @State private var totalDeltaX: CGFloat = 0
-    @State private var totalDeltaY: CGFloat = 0
-    @State private var finalHitPercentage: Double = 0
-    @State private var reactionTime: TimeInterval = 0
-    @State private var totalReactionTime: TimeInterval = 0
-    @State private var targetAppearedTime: Date?
-    @State private var attemptCount        = 0
-    @State private var finalCode: String = ""
-    
-    private let maxAttempts = 5
-    private let blueDotSize: CGFloat = 100
-    private let redDotSize: CGFloat  = 20
-
-    private var averageReactionTime: TimeInterval {
-        guard attemptCount > 0 else { return 0 }
-        return totalReactionTime / Double(attemptCount)
+    enum TestType {
+        case start
+        case instrProsaccade, prosaccade
+        case instrAntisaccade, antisaccade
+        case instrGapEffect, gapEffect
+        case instrNovelty, noveltyFixation
+        case results
     }
-    private var averageDeltaX: CGFloat {
-        guard attemptCount > 0 else { return 0 }
-        return totalDeltaX / CGFloat(attemptCount)
-    }
-    private var averageDeltaY: CGFloat {
-        guard attemptCount > 0 else { return 0 }
-        return totalDeltaY / CGFloat(attemptCount)
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                // ─── SLIDE SCREEN ───────────────────────────────────────
-                if slidePhase > 0 {
-                    Color.white.ignoresSafeArea()
-                    Text("Test \(slidePhase)/3")
-                        .font(.system(size: 64, weight: .bold))
-                        .foregroundColor(.black)
-                        .onAppear {
-                            let current = slidePhase
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                                slidePhase = 0
-                                switch current {
-                                case 1:
-                                    // Test 1/3 → Reaction‐Time Game
-                                    // (no flag needed; will fall through to attemptCount < maxAttempts block)
-                                    break
-                                case 2:
-                                    showReflexDotGame = true
-                                case 3:
-                                    showOptokineticTest = true
-                                default:
-                                    break
-                                }
-                            }
-                        }
-
-                // ─── 1) Start Screen ────────────────────────────────────
-                } else if showStartScreen {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 20) {
-                        Text("Reaction Time Game")
-                            .font(.largeTitle)
-                            .foregroundColor(.white)
-
-                        Text("""
-                            When the blue circle appears, gaze at it and pinch to tap as quickly as you can. \
-                            You will get \(maxAttempts) attempts. After that, you’ll be tested on your reflexes.
-                            """)
-                            .font(.body)
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                            .padding()
-
-                        Button("Start Game") {
-                            // reset all state
-                            attemptCount        = 0
-                            reactionTime        = 0
-                            totalReactionTime   = 0
-                            deltaX              = 0
-                            deltaY              = 0
-                            totalDeltaX         = 0
-                            totalDeltaY         = 0
-                            finalHitPercentage  = 0
-                            lastPosition        = .zero
-                            showStartScreen     = false
-
-                            // show slide 1/3 first
-                            slidePhase = 1
-                        }
-                        .font(.title2)
-                        .padding(.horizontal, 40)
-                        .padding(.vertical, 12)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                    }
-                    .frame(width: geo.size.width * 0.8)
-                    .position(x: geo.size.width/2, y: geo.size.height/2)
-
-                // ─── 2) Reaction‐Time Gameplay ───────────────────────────
-                } else if attemptCount < maxAttempts
-                         && !showReflexDotGame
-                         && !showOptokineticTest
-                {
-                    Color.black.ignoresSafeArea()
-                    // fixed red dot
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: redDotSize, height: redDotSize)
-                        .position(x: geo.size.width/2, y: geo.size.height/2)
-
-                    // moving blue target
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: blueDotSize, height: blueDotSize)
-                        .position(targetPosition)
-                        .onAppear { spawnTarget(in: geo.size) }
-                        .focusable(true)
-                        .onTapGesture {
-                            guard let appear = targetAppearedTime else { return }
-                            reactionTime = Date().timeIntervalSince(appear)
-                            totalReactionTime += reactionTime
-                            attemptCount += 1
-
-                            if attemptCount < maxAttempts {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    reactionTime = 0
-                                    spawnTarget(in: geo.size)
-                                }
-                            } else {
-                                // done with reaction test → show Test 2/3
-                                slidePhase = 2
-                            }
-                        }
-
-                    // stats overlay
-                    VStack(spacing: 6) {
-                        if reactionTime > 0 {
-                            Text("Reaction: \(reactionTime, specifier: "%.2f") s")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        Text("Δx: \(deltaX, specifier: "%.0f"), Δy: \(deltaY, specifier: "%.0f")")
-                            .font(.body)
-                            .foregroundColor(.yellow)
-                    }
-                    .position(x: geo.size.width/2, y: 50)
-
-                // ─── 3) Reflex‐Dot Game ──────────────────────────────────
-                } else if showReflexDotGame {
-                    ReflexDotGameView(
-                        isShowing: $showReflexDotGame,
-                        hitPercentageHandler: { pct in finalHitPercentage = pct }
-                    )
-                    .onDisappear {
-                        // after reflex-dot, show Test 3/3
-                        slidePhase = 3
-                    }
-
-                // ─── 4) Optokinetic Test ─────────────────────────────────
-                } else if showOptokineticTest {
-                    OptokineticTestView(isShowing: $showOptokineticTest)
-
-                // ─── 5) Final End Screen ─────────────────────────────────
-                } else {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 20) {
-                        Text("Game Over!")
-                            .font(.largeTitle)
-                            .foregroundColor(.green)
-
-                        Text("Your average reaction time:")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                        Text("\(averageReactionTime, specifier: "%.2f") s")
-                            .font(.system(size: 48, weight: .bold))
-                            .foregroundColor(.white)
-
-                        Text("Average Δx: \(averageDeltaX, specifier: "%.0f")")
-                            .font(.title2)
-                            .foregroundColor(.yellow)
-                        Text("Average Δy: \(averageDeltaY, specifier: "%.0f")")
-                            .font(.title2)
-                            .foregroundColor(.yellow)
-                        Text("Dot Hit Accuracy: \(finalHitPercentage, specifier: "%.0f")%")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                        Text("Final Score: \(finalCode)")
-                        .font(.title2)
-                        .foregroundColor(.white)
-                        .onAppear {
-                            if finalCode.isEmpty {
-                                finalCode = generateRandomCode()
-                            }
-                        }
-
-                        Button("Play Again") {
-                            showStartScreen = true
-                        }
-                        .font(.title2)
-                        .padding(.horizontal, 40)
-                        .padding(.vertical, 12)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                    }
-                    .frame(width: geo.size.width * 0.8)
-                    .position(x: geo.size.width/2, y: geo.size.height/2)
-                }
-            }
-        }
-    }
-
-    /// spawn a new blue dot away from center
-    private func spawnTarget(in size: CGSize) {
-        guard attemptCount < maxAttempts else { return }
-        lastPosition = targetPosition
-        let pad: CGFloat = 50
-        let center = CGPoint(x: size.width/2, y: size.height/2)
-        let minDist = (redDotSize + blueDotSize)/2
-
-        var x: CGFloat, y: CGFloat
-        repeat {
-            x = .random(in: pad...(size.width - pad))
-            y = .random(in: pad...(size.height - pad))
-        } while hypot(x - center.x, y - center.y) < minDist
-
-        targetPosition       = CGPoint(x: x, y: y)
-        deltaX               = x - lastPosition.x
-        deltaY               = y - lastPosition.y
-        totalDeltaX         += abs(deltaX)
-        totalDeltaY         += abs(deltaY)
-        targetAppearedTime   = Date()
-    }
-    private func generateRandomCode() -> String {
-        let chars = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-        return String((0..<14).map { _ in chars.randomElement()! })
-    }
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Subview: Reflex-Dot Game (repurposed so the circle moves side-to-side)
-// ─────────────────────────────────────────────────────────────────────────────
-struct ReflexDotGameView: View {
-    @Binding var isShowing: Bool
-    var hitPercentageHandler: (Double) -> Void
-
-    // --- Tunables ---
-    private let circleSize: CGFloat = 60
-    private let duration: TimeInterval = 12        // total run time (s)
-    private let omega: Double = 0.8                // angular speed (rad/s)
-    private let rampTime: TimeInterval = 0.8       // ease in/out time (s)
-
-    // --- State ---
-    @State private var startDate = Date()
-    @State private var finished = false
-
-    @State private var hitCount = 0
-    @State private var missCount = 0
-    
-    @State private var currentX: CGFloat = 0
-    @State private var currentY: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                VStack(spacing: 8) {
-                    Text("Smooth Pursuit")
-                        .font(.title)
-                        .foregroundColor(.white)
-                    Text("Track the blue circle with your eyes.")
-                        .foregroundColor(.white.opacity(0.8))
-                        .font(.headline)
-                }
-                .position(x: geo.size.width/2, y: 80)
+                switch activeTest {
+                case .start:
+                    StartScreen(onStart: { activeTest = .instrProsaccade })
 
-                // Continuous side-to-side motion
-                TimelineView(.animation) { timeline in
-                    let t = timeline.date.timeIntervalSince(startDate)
-                    let progress = clamp01(t / duration)
-                    let eased = easeInOut(t: t, total: duration, ramp: rampTime)
-
-                    let centerY = geo.size.height / 2
-                    let centerX = geo.size.width / 2
-                    let amplitude = geo.size.width * 0.35   // horizontal travel
-                    let x = centerX + amplitude * CGFloat(sin(omega * t)) * CGFloat(eased)
-
-                    Circle()
-                        .fill(Color.blue)
-                        .frame(width: circleSize, height: circleSize)
-                        .position(x: x, y: centerY)
-                        .shadow(radius: 8)
-                        .onChange(of: x) {
-                            self.currentX = x
-                            self.currentY = centerY
-                        }
-                        .onChange(of: progress) {
-                            if progress >= 1.0 && !finished {
-                                finished = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                                    hitPercentageHandler(hitPercentage)
-                                    isShowing = false
-                                }
-                            }
-                        }
-                }
-                VStack(spacing: 6) {
-                    Text("Hits: \(hitCount)").foregroundColor(.green)
-                    Text("Misses: \(missCount)").foregroundColor(.red)
-                    Text("Accuracy: \(hitPercentage, specifier: "%.0f")%").foregroundColor(.yellow)
-                }
-                .font(.headline)
-                .position(x: geo.size.width/2, y: geo.size.height - 100)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onEnded { value in
-                        let loc = value.location
-                        let dx = loc.x - currentX
-                        let dy = loc.y - currentY
-                        let r = circleSize / 2
-                        if (dx*dx + dy*dy) <= (r*r) {
-                            hitCount += 1     // tap inside = hit
-                        } else {
-                            missCount += 1    // tap outside = miss
-                        }
+                // --- 1) PROSACCADE SEQUENCE ---
+                case .instrProsaccade:
+                    InstructionView(
+                        title: "Prosaccade Test",
+                        instructions: "A central, white fixation point will be present. Direct your gaze quickly and accurately to the red target as soon as it appears. Hold your gaze on the target until it disappears, then revert back to the white fixation point. Keep your head positioned still.",
+                        buttonText: "Begin Prosaccade",
+                        onContinue: { activeTest = .prosaccade }
+                    )
+                case .prosaccade:
+                    ProsaccadeTestView(geo: geo) { res in
+                        finalResults["Prosaccade"] = res
+                        activeTest = .instrAntisaccade
                     }
-            )
-            .onAppear { startDate = Date() }
-        }
-    }
-    
-    private var hitPercentage: Double {
-        let total = hitCount + missCount
-        return total > 0 ? (Double(hitCount) / Double(total) * 100.0) : 0
-    }
-    
-    // Helpers
-    private func clamp01(_ x: Double) -> Double { max(0, min(1, x)) }
 
-    // Smoothstep-style ease in/out with ramp at both ends
-    private func easeInOut(t: TimeInterval, total: TimeInterval, ramp: TimeInterval) -> Double {
-        if total <= 0 { return 1 }
-        if t <= 0 { return 0 }
-        if t >= total { return 0 } // fade to stop at the end
+                // --- 2) ANTISACCADE SEQUENCE ---
+                case .instrAntisaccade:
+                    InstructionView(
+                        title: "Antisaccade Test",
+                        instructions: "Look at the central dot; as soon as a new dot appears look in the opposite direction, to here, as fast as you can. You will probably sometimes make mistakes, and this is perfectly normal.",
+                        buttonText: "Begin Antisaccade",
+                        onContinue: { activeTest = .antisaccade }
+                    )
+                case .antisaccade:
+                    AntisaccadeTestView(geo: geo) { res in
+                        finalResults["Antisaccade"] = res
+                        activeTest = .instrGapEffect
+                    }
 
-        if t < ramp {
-            let u = t / ramp
-            return u * u * (3 - 2*u) // smooth step
+                // --- 3) GAP EFFECT SEQUENCE ---
+                case .instrGapEffect:
+                    InstructionView(
+                        title: "Gap Effect Test",
+                        instructions: "During this test, try to quickly shift your gaze between objects on the screen to the best of your ability. A fixation cross will appear, then disappear for a brief gap before the cyan target appears.",
+                        buttonText: "Begin Gap Test",
+                        onContinue: { activeTest = .gapEffect }
+                    )
+                case .gapEffect:
+                    GapEffectTestView(geo: geo) { res in
+                        finalResults["GapEffect"] = res
+                        activeTest = .instrNovelty
+                    }
+
+                // --- 4) NOVELTY FIXATION SEQUENCE ---
+                case .instrNovelty:
+                    InstructionView(
+                        title: "Novelty Fixation",
+                        instructions: "Various visual stimuli will be presented. Please react naturally to what you see. You should focus your attention on the novel images—those you have not seen before in the sequence.",
+                        buttonText: "Begin Novelty Test",
+                        onContinue: { activeTest = .noveltyFixation }
+                    )
+                case .noveltyFixation:
+                    NoveltyFixationView(geo: geo) { res in
+                        finalResults["Novelty"] = res
+                        activeTest = .results
+                    }
+
+                case .results:
+                    ResultsView(results: finalResults) {
+                        activeTest = .start
+                    }
+                }
+            }
         }
-        if t <= total - ramp {
-            return 1
-        }
-        let v = (total - t) / ramp
-        return v * v * (3 - 2*v)
     }
 }
 
+// MARK: – Reusable Instruction Component
+struct InstructionView: View {
+    let title: String
+    let instructions: String
+    let buttonText: String
+    let onContinue: () -> Void
 
+    var body: some View {
+        VStack(spacing: 30) {
+            Text(title).font(.system(size: 48, weight: .bold)).foregroundColor(.white)
+            ScrollView {
+                Text(instructions).font(.title3).lineSpacing(8).foregroundColor(.white).multilineTextAlignment(.center).padding()
+            }.frame(maxHeight: 400)
+            Button(action: onContinue) {
+                Text(buttonText).font(.title2).bold().padding().frame(width: 300).background(Color.blue).foregroundColor(.white).cornerRadius(15)
+            }
+        }.padding(40).background(Color.white.opacity(0.05)).cornerRadius(20).padding()
+    }
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Subview: Optokinetic Test
-// ─────────────────────────────────────────────────────────────────────────────
-struct OptokineticTestView: View {
-    @Binding var isShowing: Bool
-    @State private var phase: Int         = 0
-    @State private var offset: CGFloat    = 0
-    @State private var stripes: [CGFloat] = []
+// MARK: – 1) Prosaccade Test (5 Targets)
+struct ProsaccadeTestView: View {
+    let geo: GeometryProxy
+    var onComplete: (String) -> Void
+    @State private var attempt = 0
+    @State private var targetPos = CGPoint.zero
+    @State private var showTarget = false
+    private let totalTargets = 5
+    
+    var body: some View {
+        ZStack {
+            Circle().fill(.white).frame(width: 20, height: 20).position(x: geo.size.width/2, y: geo.size.height/2)
+            if showTarget { Circle().fill(.red).frame(width: 20, height: 20).position(targetPos) }
+            Text("Target \(attempt)/\(totalTargets)").foregroundColor(.gray).position(x: geo.size.width/2, y: 100)
+        }.onAppear { runSequence() }
+    }
+    
+    func runSequence() {
+        guard attempt < totalTargets else { onComplete("Complete"); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            targetPos = randomSaccadePosition(in: geo.size)
+            showTarget = true
+            attempt += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                showTarget = false
+                runSequence()
+            }
+        }
+    }
+}
 
-    private let redDotSize: CGFloat = 40
+// MARK: – 2) Antisaccade Test (5 Trials)
+struct AntisaccadeTestView: View {
+    let geo: GeometryProxy
+    var onComplete: (String) -> Void
+    @State private var attempt = 0
+    @State private var showFixation = true
+    @State private var showTarget = false
+    @State private var targetPos = CGPoint.zero
+    private let totalTrials = 5
 
     var body: some View {
         ZStack {
-            Color.white.ignoresSafeArea()
-
-            if phase == 0 {
-                VStack(spacing: 16) {
-                    Text("Optokinetic")
-                        .font(.system(size: 72, weight: .bold))
-                        .foregroundColor(.black)
-
-                    Text("Look at the red dot in the center")
-                        .font(.title2)
-                        .foregroundColor(.black)
-                }
-                .multilineTextAlignment(.center)
-                .onAppear {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        phase = 1
-                    }
-                }
-
-            } else {
-                GeometryReader { geo in
-                    ZStack {
-                        HStack(spacing: 20) {
-                            ForEach(stripes.indices, id: \.self) { i in
-                                Rectangle()
-                                    .fill(Color(.darkGray))
-                                    .frame(width: stripes[i], height: geo.size.height)
-                            }
-                        }
-                        .offset(x: offset)
-                        .onAppear {
-                            stripes = generateStripes(totalWidth: geo.size.width * 2)
-                            offset = 0
-                            withAnimation(.linear(duration: 7)) {
-                                offset = -2 * geo.size.width
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
-                                isShowing = false
-                            }
-                        }
-
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: redDotSize, height: redDotSize)
-                            .position(x: geo.size.width / 2, y: geo.size.height / 2)
-                    }
+            if showFixation { Image(systemName: "plus").foregroundColor(.white).font(.title).position(x: geo.size.width/2, y: geo.size.height/2) }
+            if showTarget { Circle().fill(.cyan).frame(width: 30, height: 30).position(targetPos) }
+            Text("Trial \(attempt)/\(totalTrials)").foregroundColor(.gray).position(x: geo.size.width/2, y: 100)
+        }.onAppear { runSequence() }
+    }
+    
+    func runSequence() {
+        guard attempt < totalTrials else { onComplete("Complete"); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            showFixation = false
+            targetPos = randomSaccadePosition(in: geo.size)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                showTarget = true
+                attempt += 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    showTarget = false
+                    showFixation = true
+                    runSequence()
                 }
             }
         }
     }
+}
 
-    private func generateStripes(totalWidth: CGFloat) -> [CGFloat] {
-        var arr: [CGFloat] = []
-        var sum: CGFloat = 0
-        while sum < totalWidth {
-            let w = CGFloat.random(in: 20...80)
-            arr.append(w)
-            sum += w + 20
+// MARK: – 3) Gap Effect Test (Cyan on Gray scale) [cite: 257, 264-270]
+struct GapEffectTestView: View {
+    let geo: GeometryProxy
+    var onComplete: (String) -> Void
+    
+    @State private var attempt = 0
+    @State private var showFixation = false
+    @State private var showTarget = false
+    @State private var targetPos = CGPoint.zero
+    
+    private let totalTrials = 5
+    private let gapDuration = 0.3 // 300ms gap [cite: 265]
+    private let fixationDuration = 1.0 // 1000ms fixation [cite: 264]
+
+    var body: some View {
+        ZStack {
+            Color(white: 0.85).ignoresSafeArea() // Light Gray background [cite: 266]
+
+            if showFixation {
+                Image(systemName: "plus").font(.system(size: 40, weight: .light)).foregroundColor(.black)
+                    .position(x: geo.size.width/2, y: geo.size.height/2) // Central fixation cross [cite: 236]
+            }
+            
+            if showTarget {
+                Circle().fill(Color(red: 0, green: 0.8, blue: 0.8)).frame(width: 30, height: 30)
+                    .position(targetPos) // Cyan target [cite: 266]
+            }
+            
+            Text("Trial \(attempt)/\(totalTrials)").foregroundColor(.black.opacity(0.6)).position(x: geo.size.width/2, y: 100)
         }
-        return arr
+        .onAppear { runSequence() }
+    }
+    
+    private func runSequence() {
+        guard attempt < totalTrials else { onComplete("Complete"); return }
+        showFixation = true
+        showTarget = false
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + fixationDuration) {
+            showFixation = false
+            // Radial distance = 1/4 of (width + height)/2
+            let radialDistance = (geo.size.width + geo.size.height) / 8
+            targetPos = calculateRadialPosition(distance: radialDistance, center: CGPoint(x: geo.size.width/2, y: geo.size.height/2))
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + gapDuration) {
+                showTarget = true
+                attempt += 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { runSequence() }
+            }
+        }
+    }
+    
+    private func calculateRadialPosition(distance: CGFloat, center: CGPoint) -> CGPoint {
+        let angle = CGFloat.random(in: 0...(2 * .pi))
+        return CGPoint(x: center.x + cos(angle) * distance, y: center.y + sin(angle) * distance)
     }
 }
 
+// MARK: – 4) Novelty Fixation Test (Start -> 1-back -> 2-back) [cite: 358-375]
+struct NoveltyFixationView: View {
+    let geo: GeometryProxy
+    var onComplete: (String) -> Void
+    @State private var phase: NoveltyPhase = .start
+    @State private var isShowingContent = false
+    
+    enum NoveltyPhase { case start, oneBack, twoBack }
+    
+    private var dynamicSquareSize: CGFloat {
+        let minDim = min(geo.size.width, geo.size.height)
+        return (minDim * 0.7) / 2 - 20
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text(phaseTitle).font(.largeTitle).foregroundColor(.white).opacity(isShowingContent ? 1 : 0)
+            if isShowingContent {
+                VStack(spacing: 20) {
+                    HStack(spacing: 20) {
+                        ImagePlaceholder(label: topLeftLabel, size: dynamicSquareSize)
+                        ImagePlaceholder(label: topRightLabel, size: dynamicSquareSize)
+                    }
+                    HStack(spacing: 20) {
+                        ImagePlaceholder(label: bottomLeftLabel, size: dynamicSquareSize)
+                        ImagePlaceholder(label: bottomRightLabel, size: dynamicSquareSize)
+                    }
+                }
+            } else {
+                Color.gray.opacity(0.3).frame(width: dynamicSquareSize * 2 + 20, height: dynamicSquareSize * 2 + 20).cornerRadius(15)
+            }
+        }.onAppear { runFullSequence() }
+    }
+    
+    private func runFullSequence() {
+        displaySlide(for: .start) { displaySlide(for: .oneBack) { displaySlide(for: .twoBack) { onComplete("Measured") } } }
+    }
+    
+    private func displaySlide(for newPhase: NoveltyPhase, completion: @escaping () -> Void) {
+        isShowingContent = false
+        phase = newPhase
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { // 1s grey screen [cite: 379]
+            isShowingContent = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10.5) { completion() } // 10.5s duration [cite: 379]
+        }
+    }
 
+    private var phaseTitle: String {
+        switch phase { case .start: return "Start"; case .oneBack: return "1-back"; case .twoBack: return "2-back" }
+    }
+    private var topLeftLabel: String {
+        switch phase { case .start: return "1"; case .oneBack: return "1"; case .twoBack: return "N" }
+    }
+    private var topRightLabel: String {
+        switch phase { case .start: return "2"; case .oneBack: return "2"; case .twoBack: return "N" }
+    }
+    private var bottomLeftLabel: String {
+        switch phase { case .start: return "3"; case .oneBack: return "N"; case .twoBack: return "3" }
+    }
+    private var bottomRightLabel: String {
+        switch phase { case .start: return "4"; case .oneBack: return "N"; case .twoBack: return "4" }
+    }
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MARK: – Preview
-// ─────────────────────────────────────────────────────────────────────────────
+struct ImagePlaceholder: View {
+    let label: String
+    let size: CGFloat
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10).fill(label == "N" ? Color.blue.opacity(0.8) : Color.white.opacity(0.9))
+            .frame(width: size, height: size).overlay(Text(label).font(.system(size: size * 0.2, weight: .bold)).foregroundColor(label == "N" ? .white : .black))
+    }
+}
+
+// MARK: – Helper Utilities
+func randomSaccadePosition(in size: CGSize) -> CGPoint {
+    let side = Bool.random() ? -1.0 : 1.0
+    return CGPoint(x: size.width/2 + (side * CGFloat.random(in: 250...450)), y: size.height/2 + CGFloat.random(in: -50...50))
+}
+
+struct StartScreen: View {
+    var onStart: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Biomarker Research Suite").font(.largeTitle).foregroundColor(.white)
+            Button("Start Test") { onStart() }.padding().background(Color.blue).foregroundColor(.white).cornerRadius(10)
+        }
+    }
+}
+
+struct ResultsView: View {
+    let results: [String: String]
+    var onRestart: () -> Void
+    var body: some View {
+        VStack(spacing: 15) {
+            Text("Assessment Complete").font(.title).foregroundColor(.green)
+            ForEach(results.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in Text("\(key): \(value)").foregroundColor(.white) }
+            Button("Restart") { onRestart() }.padding().background(Color.gray).cornerRadius(8).padding(.top)
+        }
+    }
+}
+
+// MARK: – Preview for Apple Vision Pro
 struct ReactionGameView_Previews: PreviewProvider {
     static var previews: some View {
-        Group {
-            ReactionGameView()
-                .previewDevice("Apple Vision Pro")
-                .previewDisplayName("Vision Pro")
-
-            ReactionGameView()
-                .previewDevice("iPhone 15 Pro")
-                .previewDisplayName("iPhone 15 Pro")
-        }
+        ReactionGameView()
+            .previewDevice("Apple Vision Pro")
     }
 }
